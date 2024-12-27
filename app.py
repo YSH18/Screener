@@ -3,7 +3,120 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
+import tempfile
 import os
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from google.auth.transport.requests import Request
+from googleapiclient.http import MediaIoBaseDownload
+from googleapiclient.errors import HttpError
+
+from io import BytesIO
+
+# Google Drive API scope
+SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+
+folder_id = '1pjW5_S83PMTUh0Kfy7XiyP69H0XJ1Hmt'
+
+def authenticate_drive_api():
+    creds = None
+    if os.path.exists('token.json'):
+        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open('token.json', 'w') as token:
+            token.write(creds.to_json())
+    return build('drive', 'v3', credentials=creds)
+
+
+def list_files_in_folder(service, folder_id):
+    """Lists all files in a specified Google Drive folder, handling pagination."""
+    try:
+        files = []
+        page_token = None
+
+        while True:
+            # Create the query to list the files in the specified folder
+            query = f"'{folder_id}' in parents"
+
+            # Call the Drive API to list the files in the folder
+            response = service.files().list(q=query, pageSize=100, fields="nextPageToken, files(id, name)",
+                                            pageToken=page_token).execute()
+
+            # Add the files from the current page to the list
+            files.extend(response.get('files', []))
+
+            # Check if there is a nextPageToken, which means there are more files to fetch
+            page_token = response.get('nextPageToken')
+            if not page_token:
+                break  # No more pages, stop the loop
+
+        return files
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return []
+
+def download_file(service, file_id):
+    """Download a file from Google Drive and return its content as a DataFrame."""
+    try:
+        print(f"Starting download of file with ID: {file_id}")
+
+        # Request to download the file
+        request = service.files().get_media(fileId=file_id)
+        file_content = BytesIO()  # Create an in-memory file buffer
+        downloader = MediaIoBaseDownload(file_content, request)
+
+        done = False
+        while not done:
+            status, done = downloader.next_chunk()  # Progress indicator
+            print(f"Download progress: {int(status.progress() * 100)}%")
+
+        # After download, check the size of the file
+        print(f"Download completed. File size: {file_content.getbuffer().nbytes} bytes.")
+
+        # Ensure we are correctly reading the file content into a DataFrame
+        file_content.seek(0)  # Reset the file pointer to the beginning after download
+        try:
+            print("Attempting to read the file into a DataFrame...")
+            df = pd.read_excel(file_content, engine='openpyxl')
+            print("File read successfully into DataFrame.")
+            return df
+        except Exception as e:
+            print(f"Error reading the Excel file: {e}")
+            return None
+    except HttpError as error:
+        print(f"Google Drive API Error: {error}")
+        return None
+    except Exception as e:
+        print(f"General error occurred during file download or processing: {e}")
+        return None
+
+
+def load_stock_data(stock_symbol, folder_id):
+    service = authenticate_drive_api()
+    files = list_files_in_folder(service, folder_id)
+    print(f"Found {len(files)} files in the folder.")
+    print("Files in folder:", [file['name'] for file in files])
+    # Log the stock symbol to see if it's passed correctly
+    print(f"Looking for file: {stock_symbol}_div.xlsx")
+
+    if not files:
+        return None
+
+    file_to_download = next((file for file in files if file['name'].lower() == f"{stock_symbol.lower()}_div.xlsx"),
+                            None)
+
+    if not file_to_download:
+        st.error(f"Data file for stock symbol '{stock_symbol}' not found.")
+        return None
+    return download_file(service, file_to_download['id'])
+
 
 # Define user credentials
 USER_CREDENTIALS = {
@@ -82,18 +195,7 @@ def select_stock(stock):
     st.session_state['selected_stock'] = stock
     st.session_state['page'] = "Chart Viewer"
 
-
-# Function to check selected indicators and filter the stocks
 def check_indicators_and_save(df, min_volume, min_price, min_banker_value):
-    """
-    Filter stocks based on selected checkboxes and save matching symbols to a .txt file.
-
-    Args:
-        df (pd.DataFrame): DataFrame containing the screener results.
-
-    Returns:
-        list: Symbols that meet all selected criteria.
-    """
     try:
         # Initialize mask for filtering
         mask = pd.Series([True] * len(df))
@@ -110,40 +212,28 @@ def check_indicators_and_save(df, min_volume, min_price, min_banker_value):
 
         # Apply user-defined filters
         if min_volume:
-            mask &= (df['volume'] >= min_volume*100000)
+            mask &= (df['volume'] >= min_volume * 100000)
         if min_price:
             mask &= (df['close'] >= min_price)
         if min_banker_value:
-            mask &= (df['brsi'] >= min_banker_value)  # Assuming `banker_value` column exists
+            mask &= (df['brsi'] >= min_banker_value)  # Assuming `brsi` column exists
 
         # Get matching symbols
-        matching_symbols = df[mask]['symbol'].tolist()
+        matching_symbols = [str(symbol) for symbol in df[mask]['symbol'].tolist()]
 
-        # Save results to a .txt file
-        output_path = "C:/Users/Cynthia Yeoh/Desktop/screener/test/filtered_results.txt"
-        with open(output_path, "w") as file:
-            file.write("\n".join(matching_symbols))
+        # Create a temporary file to save the filtered results
+        with tempfile.NamedTemporaryFile(delete=False, mode='w', suffix='.txt') as temp_file:
+            # Write the matching symbols to the file
+            temp_file.write("\n".join(matching_symbols))
+            temp_file_path = temp_file.name  # Get the path for the saved file
 
-        return matching_symbols
+        # Return the matching symbols and file path for further use (could be used to read back or process further)
+        return matching_symbols, temp_file_path
 
     except Exception as e:
-        st.error(f"Error filtering data: {str(e)}")
-        return []
-
-
-# Function to load stock data
-def load_stock_data(stock_symbol):
-    file_path = f"C:/Users/Cynthia Yeoh/Desktop/screener/TV historical data dividend (20241023)/{stock_symbol}_div.xlsx"
-    try:
-        df = pd.read_excel(file_path)
-        df['datetime'] = pd.to_datetime(df['datetime'])
-        return df
-    except FileNotFoundError:
-        st.error(f"Data file for stock symbol '{stock_symbol}' not found.")
-        return None
-    except Exception as e:
-        st.error(f"Error loading data: {str(e)}")
-        return None
+        # Add more detailed error info
+        st.error(f"Error processing data: {str(e)}, Data type of the DataFrame: {type(df)}")
+        return [], None
 
 
 # Function to calculate fund flow
@@ -189,7 +279,7 @@ def calculate_fund_flow(df):
 
 # Function to display chart
 def display_chart(stock_symbol):
-    df = load_stock_data(stock_symbol)
+    df = load_stock_data(stock_symbol,'1pjW5_S83PMTUh0Kfy7XiyP69H0XJ1Hmt')
     if df is not None:
         higher, lower, palette, signal, slow_ma_c = calculate_fund_flow(df)
 
@@ -288,6 +378,7 @@ def main():
     st.title("选股平台")
     # Initialize the number of matching stocks
     num_matching_stocks = 0
+    temp_file_path = None
 
     if not st.session_state['logged_in']:
         st.subheader("Login")
@@ -352,56 +443,79 @@ def main():
 
             col5, col6 = st.columns([1, 1])
 
-            # Show list button
             with col5:
-                if st.button("OK") :
+                if st.button("OK"):
                     st.session_state['show_list'] = False
-                    # Read the Excel file
                     try:
-                        file_path = r"C:\Users\Cynthia Yeoh\Desktop\screener\screened result\screened_nodered_20241224.xlsx"
-                        df = pd.read_excel(file_path)
+                        # Authenticate and download the file content (this returns a DataFrame directly)
+                        service = authenticate_drive_api()
+                        file_id = '11WYYqM1vyVaRrAvnu5Wkef8WHMiofD0O'  # meeting criteria file
+                        file_content = download_file(service, file_id)
 
-                        # Get matching symbols
-                        matching_symbols = check_indicators_and_save(df, min_volume,min_price,min_banker_value)
+                        # Print the type of file_content to check if it's already a DataFrame
+                        print(
+                            f"Downloaded file content type: {type(file_content)}")  # Should print <class 'pandas.core.frame.DataFrame'>
 
+                        # Ensure that the file_content is a DataFrame
+                        if isinstance(file_content, pd.DataFrame):
+                            df = file_content  # Directly use it as the DataFrame
+                        else:
+                            st.error("Error: The downloaded file content is not a DataFrame.")
+                            return  # Exit the function early
+
+                        if df.empty:
+                            st.error("DataFrame is empty!")
+                            return  # Exit the function early
+
+                        # Proceed with filtering the data and saving the results
+                        matching_symbols, temp_file_path = check_indicators_and_save(df, min_volume, min_price,
+                                                                                     min_banker_value)
+
+                        if temp_file_path is None:
+                            st.warning("No path found or file not saved.")
+                            return  # Exit the function early
+
+                        # Display the results of the filtering
                         if matching_symbols:
                             st.success("Matching stocks are found!")
-                            num_matching_stocks = len(matching_symbols)
                             st.session_state['show_list'] = True
                         else:
                             st.warning("No stocks found matching all selected criteria.")
+
                     except Exception as e:
-                        st.error(f"Error processing data: {str(e)}")
+                        # Catch any other errors that occur during the process
+                        st.error(f"Error processing data at button: {str(e)}")
 
                 # Display results
                 if st.session_state['show_list']:
-                    file_path = "C:/Users/Cynthia Yeoh/Desktop/screener/test/filtered_results.txt"
-                    try:
-                        with open(file_path, "r") as file:
-                            stock_list = file.read().splitlines()
-                        if stock_list:
-                            st.write(f"Number of stocks meeting the criteria: {num_matching_stocks}")
-                            display_symbols_in_columns(stock_list)  # Call the function to display symbols in columns
-                        else:
-                            st.warning("No matching stocks found in the file.")
-                    except Exception as e:
-                        st.error(f"Error reading results file: {str(e)}")
+                    if temp_file_path:
+                        try:
+                            with open(temp_file_path, "r") as file:
+                                stock_list = file.read().splitlines()
+                            if stock_list:
+                                num_matching_stocks = len(matching_symbols)
+                                st.write(f"Number of stocks meeting the criteria: {num_matching_stocks}")
+                                display_symbols_in_columns(stock_list)  # Call the function to display symbols in columns
+                            else:
+                                st.warning("No matching stocks found in the file.")
+                        except Exception as e:
+                            st.error(f"Error reading results file: {str(e)}")
 
             # Download button
             with col6:
-                try:
-                    file_path = "C:/Users/Cynthia Yeoh/Desktop/screener/test/filtered_results.txt"
-                    with open(file_path, "r") as file:
-                        file_data = file.read()
-                    if file_data:
-                        st.download_button(
-                            label="Download File",
-                            data=file_data,
-                            file_name="filtered_results.txt",
-                            mime="text/plain"
-                        )
-                except FileNotFoundError:
-                    st.warning("No file available to download.")
+                if temp_file_path:
+                    try:
+                        with open(temp_file_path, "r") as file:
+                            file_data = file.read()
+                        if file_data:
+                            st.download_button(
+                                label="Download File",
+                                data=file_data,
+                                file_name="filtered_results.txt",
+                                mime="text/plain"
+                            )
+                    except FileNotFoundError:
+                        st.warning("No file available to download.")
 
             # Allow manual input of stock symbol
             stock_input = st.text_input("Or enter a stock symbol for chart viewing:")
