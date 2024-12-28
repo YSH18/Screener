@@ -28,8 +28,8 @@ redirect_uris = st.secrets["google"]["redirect_uris"]
 
 def authenticate_drive_api():
     # Get the installed credentials section from Streamlit secrets
-    client_id = st.secrets["google.installed"]["client_id"]
-    client_secret = st.secrets["google.installed"]["client_secret"]
+    client_id = st.secrets["google"]["client_id"]
+    client_secret = st.secrets["google"]["client_secret"]
 
     # Create the configuration dictionary for the OAuth flow
     client_config = {
