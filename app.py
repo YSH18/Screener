@@ -26,21 +26,29 @@ token_uri = st.secrets["google"]["token_uri"]
 redirect_uris = st.secrets["google"]["redirect_uris"]
 
 def authenticate_drive_api():
-    flow = InstalledAppFlow.from_client_config(
-        {
-            "installed": {
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "auth_uri": auth_uri,
-                "token_uri": token_uri,
-                "redirect_uris": redirect_uris,
-            }
-        },
-        scopes=["https://www.googleapis.com/auth/drive.readonly"],
-    )
-    creds = flow.run_local_server(port=0)
+    creds = None
+    if 'credentials' in st.secrets:
+        creds = Credentials.from_authorized_user_info(st.secrets['credentials'])
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_config(
+                {
+                    "installed": {
+                        "client_id": client_id,
+                        "client_secret": client_secret,
+                        "auth_uri": auth_uri,
+                        "token_uri": token_uri,
+                        "redirect_uris": redirect_uris,
+                    }
+                },
+                scopes=["https://www.googleapis.com/auth/drive.readonly"],
+            )
+            creds = flow.run_console()  # Use console flow for deployment
+        # Save the credentials in session for future use
+        st.secrets['credentials'] = creds.to_json()
     return build("drive", "v3", credentials=creds)
-
 
 def list_files_in_folder(service, folder_id):
     """Lists all files in a specified Google Drive folder, handling pagination."""
