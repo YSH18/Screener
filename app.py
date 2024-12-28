@@ -18,7 +18,7 @@ folder_id = '1pjW5_S83PMTUh0Kfy7XiyP69H0XJ1Hmt'
 
 def authenticate_drive_api():
     # Access the 'installed' secret configuration
-    installed_config = st.secrets.get("google.installed", {})
+    installed_config = st.secrets.get("google", {})
     if not installed_config:
         st.error("Google installed credentials are missing or misconfigured in Streamlit secrets.")
     else:
