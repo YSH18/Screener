@@ -27,22 +27,12 @@ redirect_uris = st.secrets["google"]["redirect_uris"]
 
 
 def authenticate_drive_api():
-    # Get the installed credentials section from Streamlit secrets
-    client_id = st.secrets["google"]["client_id"]
-    client_secret = st.secrets["google"]["client_secret"]
+    # Access the 'installed' secret configuration
+    installed_config = st.secrets["google.installed"]
 
-    # Create the configuration dictionary for the OAuth flow
-    client_config = {
-        "installed": {
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "redirect_uris": ["http://localhost"]
-        }
-    }
-
-    # Initialize OAuth flow
+    # Initialize OAuth flow with the correct client config
     flow = InstalledAppFlow.from_client_config(
-        client_config,
+        installed_config,
         scopes=["https://www.googleapis.com/auth/drive.readonly"]
     )
 
@@ -65,6 +55,9 @@ def authenticate_drive_api():
 
     # Build the API client
     return build("drive", "v3", credentials=creds)
+
+# Call the authenticate function to initialize the API client
+drive_service = authenticate_drive_api()
 
 
 # Call the authenticate function to initialize the API client
