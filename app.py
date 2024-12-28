@@ -14,17 +14,7 @@ from googleapiclient.errors import HttpError
 
 from io import BytesIO
 
-# Google Drive API scope
-SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
-
 folder_id = '1pjW5_S83PMTUh0Kfy7XiyP69H0XJ1Hmt'
-client_id = st.secrets["google"]["client_id"]
-client_secret = st.secrets["google"]["client_secret"]
-project_id = st.secrets["google"]["project_id"]
-auth_uri = st.secrets["google"]["auth_uri"]
-token_uri = st.secrets["google"]["token_uri"]
-redirect_uris = st.secrets["google"]["redirect_uris"]
-
 
 def authenticate_drive_api():
     # Access the 'installed' secret configuration
@@ -35,7 +25,7 @@ def authenticate_drive_api():
         installed_config,
         scopes=["https://www.googleapis.com/auth/drive.readonly"]
     )
-
+    st.write(st.secrets.keys())
     creds = None
 
     # Check if there are already saved credentials in the session
@@ -55,10 +45,6 @@ def authenticate_drive_api():
 
     # Build the API client
     return build("drive", "v3", credentials=creds)
-
-# Call the authenticate function to initialize the API client
-drive_service = authenticate_drive_api()
-
 
 # Call the authenticate function to initialize the API client
 drive_service = authenticate_drive_api()
