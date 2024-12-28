@@ -18,13 +18,15 @@ folder_id = '1pjW5_S83PMTUh0Kfy7XiyP69H0XJ1Hmt'
 
 def authenticate_drive_api():
     # Access the 'installed' secret configuration
-    installed_config = st.secrets["google.installed"]
-
-    # Initialize OAuth flow with the correct client config
-    flow = InstalledAppFlow.from_client_config(
-        installed_config,
-        scopes=["https://www.googleapis.com/auth/drive.readonly"]
-    )
+    installed_config = st.secrets.get("google.installed", {})
+    if not installed_config:
+        st.error("Google installed credentials are missing or misconfigured in Streamlit secrets.")
+    else:
+        # Your existing code to authenticate
+        flow = InstalledAppFlow.from_client_config(
+            installed_config,
+            scopes=["https://www.googleapis.com/auth/drive.readonly"]
+        )
     st.write(st.secrets.keys())
     creds = None
 
